@@ -11,10 +11,10 @@ class Arquivo implements \Cnab\Remessa\IArquivo
 
     private $_data_gravacao;
     private $_data_geracao;
-    public $banco;
-    public $codigo_banco;
-    public $configuracao = array();
-    public $layoutVersao;
+    public  $banco;
+    public  $codigo_banco;
+    public  $configuracao = array();
+    public  $layoutVersao;
     const   QUEBRA_LINHA = "\r\n";
 
     public function __construct($codigo_banco, $layoutVersao = null)
@@ -180,10 +180,11 @@ class Arquivo implements \Cnab\Remessa\IArquivo
         $this->headerLote->data_geracao = $this->headerArquivo->data_geracao;
 
         if ($this->codigo_banco == \Cnab\Banco::CEF) {
-            $this->headerLote->tipo_servico      = 2;
-            $this->headerLote->codigo_convenio   = $this->configuracao['codigo_convenio'];
-            $this->headerArquivo->codigo_cedente = $this->configuracao['codigo_convenio'];
-            $this->headerLote->codigo_cedente    = $this->configuracao['codigo_convenio'];
+            $this->headerLote->tipo_servico              = 2;
+            $this->headerLote->codigo_convenio           = $this->configuracao['codigo_convenio'];
+            $this->headerArquivo->codigo_cedente         = $this->configuracao['codigo_convenio'];
+            $this->headerLote->codigo_cedente            = $this->configuracao['codigo_convenio'];
+            $this->headerLote->uso_exclusivo_febraban_02 = "          ";
         }
 
         $this->trailerLote->codigo_banco = $this->headerArquivo->codigo_banco;
@@ -228,24 +229,38 @@ class Arquivo implements \Cnab\Remessa\IArquivo
         }
 
         if ($this->codigo_banco == \Cnab\Banco::BRADESCO) {
-            $detalhe->segmento_p->modalidade_carteira = $boleto['modalidade_carteira'];
+            $detalhe->segmento_p->modalidade_carteira = (
+            $boleto['modalidade_carteira'] ? $boleto['modalidade_carteira'] : $boleto['carteira']
+            );
         }
 
         if ($this->codigo_banco == \Cnab\Banco::CEF) {
-
-            $detalhe->segmento_p->codigo_cedente         = $this->configuracao['codigo_convenio'];
-            $detalhe->segmento_p->uso_exclusivo_caixa_02 = '000';
-            //            $detalhe->segmento_p->modalidade_carteira_sigcb   = 14; // 21 = (título Sem Registro emissão CAIXA)
+            $detalhe->segmento_p->codigo_cedente              = $this->configuracao['codigo_convenio'];
+            $detalhe->segmento_p->uso_exclusivo_caixa_02      = '000';
+            $detalhe->segmento_p->modalidade_carteira_sigcb   = (
+            $boleto['modalidade_carteira'] ? $boleto['modalidade_carteira'] : $boleto['carteira']
+            );
             $detalhe->segmento_p->indentificacao_titulo_banco = \str_pad(
                 $boleto['nosso_numero'],
                 15,
                 '0',
                 STR_PAD_LEFT
             );
+        } else {
+            $nossoNumero = $boleto['nosso_numero'];
+
+            if (!$nossoNumero && $boleto['nosso_numero_processado']) {
+                $nossoNumero = $boleto['nosso_numero_processado'];
+            }
+
+            if (!$nossoNumero && $this->configuracao['nosso_numero_processado']) {
+                $nossoNumero = $this->configuracao['nosso_numero_processado'];
+            }
+
+            $detalhe->segmento_p->nosso_numero = $nossoNumero;
         }
 
         if ($this->codigo_banco == \Cnab\Banco::SICOOB) {
-            $detalhe->segmento_p->nosso_numero    = $boleto['nosso_numero'];
             $detalhe->segmento_p->codigo_carteira = $boleto['carteira'];
         }
 
@@ -255,12 +270,6 @@ class Arquivo implements \Cnab\Remessa\IArquivo
 
         if ($this->codigo_banco != \Cnab\Banco::BANCO_DO_BRASIL) {
             $detalhe->segmento_p->forma_cadastramento = $boleto['registrado'] ? 1 : 2; // 1 = Com, 2 = Sem Registro
-        }
-
-        if ($this->codigo_banco == \Cnab\Banco::BANCO_DO_BRASIL) {
-            $detalhe->segmento_p->nosso_numero = $this->configuracao['nosso_numero_processado'];
-        } elseif ($this->codigo_banco != \Cnab\Banco::SICOOB AND $this->codigo_banco != \Cnab\Banco::CEF) {
-            $detalhe->segmento_p->nosso_numero = $boleto['nosso_numero'];
         }
 
         if ($this->codigo_banco == \Cnab\Banco::SICOOB) {
@@ -290,7 +299,9 @@ class Arquivo implements \Cnab\Remessa\IArquivo
 
         if ($boleto['valor_desconto'] > 0) {
             $detalhe->segmento_p->codigo_desconto_1 = $boleto['cod_desc_1'] ? $boleto['cod_desc_1'] : 1; // valor fixo
-            $detalhe->segmento_p->data_desconto_1   = $boleto['data_desconto'];
+            $detalhe->segmento_p->data_desconto_1   = $boleto['data_desconto'] ? new \DateTime(
+                $boleto['data_desconto']
+            ) : 0;
             $detalhe->segmento_p->valor_desconto_1  = $boleto['valor_desconto'];
         } else {
             $detalhe->segmento_p->data_desconto_1   = 0;
@@ -306,6 +317,13 @@ class Arquivo implements \Cnab\Remessa\IArquivo
             $detalhe->segmento_p->codigo_baixa      = 1; // Baixar
             $detalhe->segmento_p->prazo_baixa       = $boleto['prazo']; // Baixar automaticamente após 30 dias
             $detalhe->segmento_p->codigo_ocorrencia = $boleto['codigo_ocorrencia'];
+        }
+
+        if (
+            $boleto['codigo_ocorrencia'] == \Cnab\Movimento::REMESSA_ALTERACAO_DE_OUTROS_DADOS &&
+            in_array($boleto['identificacao_emissao'], array(4, 5))
+        ) {
+            $detalhe->segmento_p->identificacao_emissao = $boleto['identificacao_emissao'];
         }
 
         $detalhe->segmento_p->prazo_protesto = 0;
@@ -346,18 +364,25 @@ class Arquivo implements \Cnab\Remessa\IArquivo
             }
         }
 
+        $detalhe->segmento_q->bairro = $this->prepareText($boleto['sacado_bairro']);
+        $detalhe->segmento_q->cidade = $this->prepareText($boleto['sacado_cidade']);
+        $detalhe->segmento_q->estado = $boleto['sacado_uf'];
+
+        $cep        = preg_replace('/[^0-9]/', '', $boleto['sacado_cep']);
+        $cep        = str_pad($cep, 8, '0');
+        $sufixoCep  = substr($cep, 5, 3);
+        $prefixoCep = substr($cep, 0, 5);
+
         if ($this->codigo_banco == \Cnab\Banco::BANCO_DO_BRASIL) {
-            $detalhe->segmento_q->bairro     = $this->prepareText($boleto['sacado_bairro']);
-            $detalhe->segmento_q->cep        = preg_replace('/\d{3}$/', '', $boleto['sacado_cep']);
-            $detalhe->segmento_q->sufixo_cep = preg_replace('/\d{5}/', '', $boleto['sacado_cep']);
-            $detalhe->segmento_q->cidade     = $this->prepareText($boleto['sacado_cidade']);
-            $detalhe->segmento_q->estado     = $boleto['sacado_uf'];
+            $detalhe->segmento_q->cep        = $prefixoCep;
+            $detalhe->segmento_q->sufixo_cep = $sufixoCep;
             $detalhe->segmento_q->endereco   = $this->prepareText($boleto['sacado_logradouro']);
+        } elseif ($this->codigo_banco == \Cnab\Banco::CEF) {
+            $detalhe->segmento_q->cep        = $prefixoCep;
+            $detalhe->segmento_q->sufixo_cep = $sufixoCep;
+            $detalhe->segmento_q->logradouro = $this->prepareText($boleto['sacado_logradouro']);
         } else {
-            $detalhe->segmento_q->bairro     = $this->prepareText($boleto['sacado_bairro']);
-            $detalhe->segmento_q->cep        = str_replace(['-', '.'], '', $boleto['sacado_cep']);
-            $detalhe->segmento_q->cidade     = $this->prepareText($boleto['sacado_cidade']);
-            $detalhe->segmento_q->estado     = $boleto['sacado_uf'];
+            $detalhe->segmento_q->cep        = $cep;
             $detalhe->segmento_q->logradouro = $this->prepareText($boleto['sacado_logradouro']);
         }
 
@@ -398,13 +423,17 @@ class Arquivo implements \Cnab\Remessa\IArquivo
 
         if (isset($boleto['cod_desc_2'])) {
             $detalhe->segmento_r->codigo_desconto_02 = $boleto['cod_desc_2'];
-            $detalhe->segmento_r->data_desconto_02   = $boleto['data_desconto_2'];
+            $detalhe->segmento_r->data_desconto_02   = $boleto['data_desconto_2'] ? new \DateTime(
+                $boleto['data_desconto_2']
+            ) : 0;
             $detalhe->segmento_r->valor_desconto_02  = $boleto['valor_desconto_2'];
         }
 
         if (isset($boleto['cod_desc_3'])) {
             $detalhe->segmento_r->codigo_desconto_03 = $boleto['cod_desc_3'];
-            $detalhe->segmento_r->data_desconto_03   = $boleto['data_desconto_3'];
+            $detalhe->segmento_r->data_desconto_03   = $boleto['data_desconto_3'] ? new \DateTime(
+                $boleto['data_desconto_3']
+            ) : 0;
             $detalhe->segmento_r->valor_desconto_03  = $boleto['valor_desconto_3'];
         }
 
@@ -419,6 +448,7 @@ class Arquivo implements \Cnab\Remessa\IArquivo
     private function prepareText($text, $remove = null)
     {
         $result = strtoupper($this->removeAccents(trim(html_entity_decode($text))));;
+
         if ($remove) {
             $result = str_replace(str_split($remove), '', $result);
         }
@@ -428,7 +458,8 @@ class Arquivo implements \Cnab\Remessa\IArquivo
 
     private function removeAccents($string)
     {
-        return preg_replace(
+
+        $string = preg_replace(
             array(
                 '/\xc3[\x80-\x85]/',
                 '/\xc3\x87/',
@@ -442,10 +473,35 @@ class Arquivo implements \Cnab\Remessa\IArquivo
                 '/\xc3[\xac-\xaf]/',
                 '/\xc3([\xb2-\xb6]|\xb8)/',
                 '/\xc3[\xb9-\xbc]/',
+                '/\s*[=\+\_\-\(\)]\s*/',
+                '/[^0-9A-Za-z ,\-\.\/]/',
+                '/\s+([,\.\/])/',
+                '/\s+/',
             ),
-            str_split('ACEIOUaceiou', 1),
+            array(
+                'A',
+                'C',
+                'E',
+                'I',
+                'O',
+                'U',
+                'a',
+                'c',
+                'e',
+                'i',
+                'o',
+                'u',
+                ' - ',
+                ' ',
+                '$1',
+                ' ',
+            ),
             $this->isUtf8($string) ? $string : utf8_encode($string)
         );
+
+        $string = trim(trim($string, ',./-'));
+
+        return $string;
     }
 
     private function isUtf8($string)
@@ -483,7 +539,7 @@ class Arquivo implements \Cnab\Remessa\IArquivo
         $dados = $this->headerArquivo->getEncoded() . self::QUEBRA_LINHA;
         $dados .= $this->headerLote->getEncoded() . self::QUEBRA_LINHA;
 
-        foreach ($this->detalhes as $detalhe) {
+        foreach ($this->detalhes as $index => $detalhe) {
             $qtde_titulo_cobranca_simples++;
             $valor_total_titulo_simples += $detalhe->segmento_p->valor_titulo;
 
@@ -546,7 +602,7 @@ class Arquivo implements \Cnab\Remessa\IArquivo
         }
 
         $dados .= $this->trailerLote->getEncoded() . self::QUEBRA_LINHA;
-        $dados .= $this->trailerArquivo->getEncoded() . self::QUEBRA_LINHA;
+        $dados .= $this->trailerArquivo->getEncoded();
 
         return $dados;
     }
